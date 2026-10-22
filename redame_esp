@@ -1,0 +1,73 @@
+# mindriver
+
+reproductor de audio en segundo plano en c controlado por linea de comandos mediante ipc. disenado como un binario nativo sin dependencias considerables. corre como servicio en segundo plano cuando se reproduce un archivo y atiende llamados posteriores desde otras consolas para controlar la reproduccion ideal para desarollo de videojuegos sin motor o aplicaciones interactivas de otro tipo.
+
+## modulos
+
+el proyecto se divide en capas modulares iguales para windows y linux:
+
+### initcore
+se encarga del arranque y verificacion del motor de audio antes de procesar audio.
+- en windows: inicia wasapi en modo compartido (AUDCLNT_SHAREMODE_SHARED). hace una llamada de prueba al endpoint de audio por defecto para verificar el formato de mezcla (tasa de muestreo, canales y profundidad de bits).
+- en linux: implementa la cascada de sondeo:
+  1. pipewire (revisa socket pipewire-0 en runtime dir)
+  2. si falla, pulseaudio (revisa sockets nativos o variable PULSE_SERVER)
+  3. si falla, alsa (revisa dispositivos /dev/snd)
+  el primer backend disponible queda asignado a la ejecucion.
+
+### resolver
+resuelve rutas relativas y absolutas, sanea nombres de archivo para identificar los hilos y decodifica las pistas.
+el resolver actual es basico y debil aunque funcional para rutas directas y relativas. se recomienda no usar caracteres que no sean americanos (nada de cirilico, japones, ñ o caracteres acentuados) ni simbolos raros en rutas o nombres de archivo para evitar fallos al resolver o cargar.
+- saneamiento de nombres: extrae el nombre base del archivo, descarta la extension y elimina caracteres especiales, espacios, puntos o simbolos. solo mantiene caracteres alfanumericos en minusculas.
+  ejemplos:
+  shootblast.mp3 -> shootblast
+  shoot blast.mp3 -> shootblast
+  shoot_b.l#as$t.mp3 -> shootblast
+  dayum.wac -> dayum
+- decodificacion:
+  cuenta con lector directo de wav pcm (8, 16, 24, 32 bits y float) que no requiere librerias externas.
+  en windows con msvc integra soporte de windows media foundation (imfsourcereader) para descomprimir mp3, aac y otros formatos directamente a floats.
+
+### servicefunc
+gestor de hilos de audio independientes. cada archivo reproducido corre en su propio hilo y su propio flujo wasapi/posix.
+mantiene un arreglo protegido por seccion critica/mutex con estado de cada hilo:
+- loop: notloop (0) o loop (1)
+- end action:
+  - stopatend: detiene la reproduccion al finalizar la pista pero mantiene el hilo vivo en estado pausado para permitir replay posterior.
+  - deleteatend: destruye el hilo y libera la memoria en cuanto termina la reproduccion.
+  - loopatend1 hasta loopatend20: al terminar la pista, espera N segundos y luego pasa automaticamente a reproducir en loop continuo.
+- flag playing: true o false segun el estado actual de reproduccion.
+
+### main y capa ipc
+el punto de entrada distingue si ya existe una instancia de mindriver corriendo:
+- si la tuberia con nombre (\\\\.\\pipe\\mindriver_ipc en windows o /tmp/mindriver.sock en linux) responde, el comando se serializa y se envia al proceso servidor, mostrando la respuesta y saliendo de inmediato.
+- si no existe servidor activo:
+  - comandos de control (como --stop o --status) avisan que no hay servidor.
+  - si se envia una ruta de archivo, la instancia actual arranca como servidor, inicializa el motor de audio, levanta el hilo ipc y arranca la reproduccion del archivo solicitado.
+
+## sintaxis de comandos
+
+reproducir audio:
+  mindriver ruta/archivo.wav
+  mindriver ruta/archivo.mp3 --loop
+  mindriver ruta/archivo.wav --deleteatend
+  mindriver ruta/archivo.wav --loopatend5
+
+controlar un hilo existente:
+  mindriver id --stop
+  mindriver id --replay
+  mindriver id --delete
+  mindriver id --status
+
+consultar estado general de todos los hilos:
+  mindriver --status
+
+apagar el servicio:
+  mindriver --exit
+
+formato de salida de estado:
+  archivo.wav , notloop , stopatend , playing=true
+  musica.mp3 , loop , stopatend , playing=true
+
+
+este es un proyecto de codigo abierto y su uso comercial esta terminantemente prohibido ademas de sus dervidas copias o modificaciones bajo la licencia de GPL3
