@@ -4,13 +4,13 @@
 #include <string.h>
 #include <ctype.h>
 #include "common.h"
-#include <pthread.h>
 #if defined(_WIN32)
 #include <windows.h>
 #include "windows/initcore.h"
 #include "windows/resolver.h"
 #include "windows/servicefunc.h"
 #else
+#include <pthread.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
